@@ -2044,15 +2044,6 @@ def json_encode(name, data, desc, commonize=None, je_state=None):
             "unexpected {0} for {1}, expected: {2}, value: {3}".format(
                 data_type, name, desc_type, data)
 
-        # The following situation is only true for Python 2.
-        # We should not see unicode strings getting passed in. The assert is
-        # necessary since we use the PkgDecoder hook function during json_decode
-        # to convert unicode objects back into escaped str objects, which would
-        # otherwise do that conversion unintentionally.
-        if six.PY2:
-                assert not isinstance(data_type, six.text_type), \
-                    "unexpected unicode string: {0}".format(data)
-
         # we don't need to do anything for basic types
         for t in json_types_immediates:
                 if issubclass(desc_type, t):
@@ -2473,21 +2464,6 @@ def json_diff(name, d0, d1, alld0, alld1):
                 for i in range(len(d0)):
                         new_name = "{0}[{1:d}]".format(name, i)
                         json_diff(new_name, d0[i], d1[i], alld0, alld1)
-
-def json_hook(dct):
-        """Hook routine used by the JSON module to ensure that unicode objects
-        are converted to bytes objects in Python 2 and ensures that bytes
-        objects are converted to str objects in Python 3."""
-
-        rvdct = {}
-        for k, v in six.iteritems(dct):
-                if isinstance(k, six.string_types):
-                        k = force_str(k)
-                if isinstance(v, six.string_types):
-                        v= force_str(v)
-
-                rvdct[k] = v
-        return rvdct
 
 class Timer(object):
         """A class which can be used for measuring process times (user,

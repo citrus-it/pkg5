@@ -78,21 +78,6 @@ SYSREPO_HIDDEN_URI = "<system-repository>"
 PROG_DELAY = 5.0
 
 
-def _strify(input):
-        """Convert unicode string into byte string in Python 2 and convert
-        bytes string into unicode string in Python 3. This will be used by json
-        loads function."""
-
-        if isinstance(input, dict):
-                return dict([(_strify(key), _strify(value)) for key, value in
-                    six.iteritems(input)])
-        elif isinstance(input, list):
-                return [_strify(element) for element in input]
-        elif isinstance(input, (six.string_types, bytes)):
-                return misc.force_str(input, "utf-8")
-        else:
-                return input
-
 def _get_pkg_input_schema(subcommand, opts_mapping=misc.EmptyDict):
         """Get the input schema for pkg subcommand."""
 
@@ -2887,7 +2872,7 @@ def __pkg(subcommand, pargs_json, opts_json, pkg_image=None,
                 elif isinstance(opts_json, dict):
                         opts = opts_json
                 else:
-                        opts = json.loads(opts_json, object_hook=_strify)
+                        opts = json.loads(opts_json)
                 if not isinstance(opts, dict):
                         err = {"reason": "opts_json is invalid."}
                         errors_json.append(err)

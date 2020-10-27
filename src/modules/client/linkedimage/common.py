@@ -3648,17 +3648,13 @@ def load_data(path, missing_ok=False, root="/", decode=True,
     catch_exception=False):
         """Load JSON encoded linked image metadata from a file."""
 
-        object_hook = None
-        if decode:
-                object_hook = pkg.client.linkedimage.PkgDecoder
-
         try:
                 if missing_ok and not path_exists(path, root=root):
                         return None
 
                 fd = ar.ar_open(root, path, os.O_RDONLY)
                 fobj = os.fdopen(fd, "r")
-                data = json.load(fobj, object_hook=object_hook)
+                data = json.load(fobj)
                 fobj.close()
         except OSError as e:
                 # W0212 Access to a protected member
@@ -3667,25 +3663,6 @@ def load_data(path, missing_ok=False, root="/", decode=True,
                         raise apx._convert_error(e)
                 raise apx._convert_error(e)
         return data
-
-def PkgDecoder(dct):
-        """Utility class used when json decoding linked image metadata."""
-        # Replace unicode keys/values with strings
-        rvdct = {}
-        for k, v in six.iteritems(dct):
-
-                k = misc.force_str(k)
-                v = misc.force_str(v)
-
-                # convert boolean strings values back into booleans
-                if type(v) == str:
-                        if v.lower() == "true":
-                                v = True
-                        elif v.lower() == "false":
-                                v = False
-
-                rvdct[k] = v
-        return rvdct
 
 def rm_dict_ent(d, keys):
         """Remove a set of keys from a dictionary."""

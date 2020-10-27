@@ -23,6 +23,7 @@
     pkg:/library/python-3/jsonrpclib-39
     pkg:/library/python-3/jsonschema-39
     pkg:/library/python-3/mako-39
+    pkg:/library/python-3/orjson-39
     pkg:/library/python-3/ply-39
     pkg:/library/python-3/prettytable-39
     pkg:/library/python-3/portend-39

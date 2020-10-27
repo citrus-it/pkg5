@@ -21,8 +21,13 @@ json module abstraction for the packaging system.
 ############################################################################
 # Standard version
 
-from rapidjson import loads, load, dumps, dump, JSONDecodeError
+from rapidjson import dumps, dump
+from orjson import loads, JSONDecodeError
 from jsonschema import validate, ValidationError
+
+# wrappers for orjson
+def load(stream, **kw):
+    return loads(stream.read())
 
 ############################################################################
 # Debug/profiling version
