@@ -528,6 +528,7 @@ class TestCatalog(pkg5unittest.Pkg5TestCase):
                 # Verify that a stored catalog will validate, and that its
                 # current signatures match its previous signatures.
                 c.validate()
+
                 self.assertEqual(old_sigs, c.signatures)
 
                 # Finally, test that a catalog created with sign=False won't
@@ -1164,7 +1165,7 @@ class TestEmptyCatalog(pkg5unittest.Pkg5TestCase):
 
 class TestCatalogueFormats(pkg5unittest.Pkg5TestCase):
 
-        def test_ascii_catalogue(self):
+        def test_catalogue_formats(self):
                 # Create catalogue
                 c = catalog.Catalog(meta_root=self.test_root)
                 c.save()
@@ -1176,13 +1177,41 @@ class TestCatalogueFormats(pkg5unittest.Pkg5TestCase):
                     "set name=pkg.fmri value={}\n"
                     "set name=pkg.summary value=\"Testing \u2212 package\"\n"
                     .format(f), signatures=True)
+                asig = '7bbaa64f40ac015c0fb08b17cef62568854a5928'
+                bsig = '3897f87ddc353f22a17f2c4e25aa6d59b8c8102f'
 
                 c.add_package(f, manifest=m)
+                c.save(fmt='ascii')
+
+                self.assertEqual(c.signatures['catalog.summary.C'],
+                    {'sha-1': asig, 'format': 'ascii'})
+
+                # Check that the catalogue can be loaded and verified
+
+                cc = catalog.Catalog(meta_root=self.test_root)
+                self.assertEqual(cc.signatures['catalog.summary.C'],
+                    {'sha-1': asig, 'format': 'ascii'})
+
+                # Remove the 'format' key to check that an old style
+                # catalogue can be loaded
+
+                fname = os.path.join(self.test_root, "catalog.summary.C")
+                with open(fname, "r") as f:
+                        struct = json.load(f)
+                del struct['_SIGNATURE']['format']
+                with open(fname, "wb") as f:
+                        json.dump(struct, f, ensure_ascii=True);
+
+                cc = catalog.Catalog(meta_root=self.test_root)
+                self.assertEqual(cc.signatures['catalog.summary.C'],
+                    {'sha-1': asig, 'format': 'ascii'})
+
+                # Confirm that saving the catalogue converts the hashes into
+                # utf8
                 c.save()
 
                 self.assertEqual(c.signatures['catalog.summary.C'],
-                    {'sha-1': '7bbaa64f40ac015c0fb08b17cef62568854a5928'})
-
+                    {'sha-1': bsig, 'format': 'utf8'})
 
 class TestCorruptCatalog(pkg5unittest.Pkg5TestCase):
         """Tests against various forms of corrupted catalogs."""
