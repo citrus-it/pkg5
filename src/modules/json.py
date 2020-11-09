@@ -21,13 +21,47 @@ json module abstraction for the packaging system.
 ############################################################################
 # Standard version
 
-from rapidjson import dumps, dump
-from orjson import loads, JSONDecodeError
+from orjson import loads, dumps as odumps, JSONDecodeError, OPT_INDENT_2, \
+    OPT_SORT_KEYS
 from jsonschema import validate, ValidationError
 
 # wrappers for orjson
+def kwargs(**kw):
+    _kwargs = {
+        'option': 0
+    }
+    if 'indent' in kw and kw['indent']:
+        _kwargs['option'] |= OPT_INDENT_2
+    if 'sort_keys' in kw and kw['sort_keys']:
+        _kwargs['option'] |= OPT_SORT_KEYS
+    if 'default' in kw:
+        _kwargs['default'] = kw['default']
+
+    return _kwargs
+
 def load(stream, **kw):
     return loads(stream.read())
+
+def dumps(obj, as_bytes=False, **kw):
+    kwa = kwargs(**kw)
+
+    if as_bytes:
+        return odumps(obj, **kwa)
+
+    # return str for compatibility with core JSON module
+    return odumps(obj, **kwa).decode('utf-8')
+
+def dump(obj, stream, **kw):
+    if 'ensure_ascii' in kw and kw['ensure_ascii']:
+        from rapidjson import dump as rdump
+        return rdump(obj, stream, **kw)
+
+    kwa = kwargs(**kw)
+
+    if hasattr(stream, 'encoding'):
+        return stream.write(odumps(obj, **kwa).decode('utf-8'))
+
+    return stream.write(odumps(obj, **kwa))
 
 ############################################################################
 # Debug/profiling version
