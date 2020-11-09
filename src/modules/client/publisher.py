@@ -2186,6 +2186,20 @@ pkg unset-publisher {0}
                         try:
                                 v1_cat = pkg.catalog.Catalog(meta_root=croot)
                                 v1_cat.validate()
+
+                                # If the catalogue is not using utf8 format,
+                                # force a save to convert it.
+                                if 'noconvertcat' not in DebugValues:
+                                        try:
+                                                if (v1_cat.signatures
+                                                    ['catalog.attrs']
+                                                    ['format'] != 'utf8'):
+                                                        v1_cat.save()
+                                        except KeyError:
+                                                v1_cat.save()
+                                        except:
+                                                pass
+
                         except api_errors.BadCatalogSignatures:
                                 # If signature validation fails here, that means
                                 # that the attributes and individual parts were
