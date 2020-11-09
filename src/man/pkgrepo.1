@@ -2,7 +2,7 @@
 .\" Copyright (c) 2007, 2015, Oracle and/or its affiliates. All rights reserved.
 .\" Copyright (c) 2015, OmniTI Computer Consulting, Inc. All rights reserved.
 .\" Copyright 2020 OmniOS Community Edition (OmniOSce) Association.
-.TH pkgrepo 1 "27 Jul 2018" "OmniOS" "User Commands"
+.TH pkgrepo 1 "09 Nov 2020" "OmniOS" "User Commands"
 .SH NAME
 pkgrepo \- Image Packaging System repository management utility
 .SH SYNOPSIS
@@ -810,6 +810,21 @@ A list of locations (URIs) of repositories that contain packages that users migh
 .sp .6
 .RS 4n
 A list of names that must be seen as common names of certificates while validating the signatures of a package. This property is only used by the \fBverify\fR and \fBfix\fR subcommands to validate the contents of the repository. This property does not affect client settings. These values should be the same as the corresponding \fBpkg\fR(1) property values.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fBrepository/signature-format\fR
+.ad
+.sp .6
+.RS 4n
+The format used for catalogues and their signatures for data stored in the
+repository. The default value is \fIascii\fR which is the legacy format and
+should not be changed unless the repository will be accessed only be updated
+clients. The other available value is \fIutf8\fR which allows clients to
+parse the catalogues faster and with less memory usage.
 .RE
 
 .sp

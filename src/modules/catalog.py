@@ -168,8 +168,14 @@ class _JSONWriter(object):
                                 # Catalog is not empty, so a separator is
                                 # needed.
                                 sfile.write(b",")
+                        sigs = self.signatures()
+                        # When saving ascii format signatures, drop
+                        # the format tag to maintain backwards compatibility
+                        # with legacy clients.
+                        if 'format' in sigs and sigs['format'] == 'ascii':
+                                del sigs['format']
                         sfile.write(b'"_SIGNATURE":')
-                        self._dump(self.signatures(), sfile)
+                        self._dump(sigs, sfile)
                         sfile.write(b"}\n")
 
         def write(self, data):
@@ -1875,6 +1881,8 @@ class Catalog(object):
                                     "last-modified": ulog.last_modified
                                 }
                                 for n, v in six.iteritems(ulog.signatures):
+                                        if n == "format" and v == "ascii":
+                                                continue
                                         entry["signature-{0}".format(n)] = v
 
                 # Save any CatalogParts that are currently in-memory,
@@ -1892,6 +1900,8 @@ class Catalog(object):
                             "last-modified": part.last_modified
                         }
                         for n, v in six.iteritems(part.signatures):
+                                if n == "format" and v == "ascii":
+                                        continue
                                 entry["signature-{0}".format(n)] = v
 
                 # Finally, save the catalog attributes.

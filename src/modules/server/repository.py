@@ -384,11 +384,13 @@ class _RepoStore(object):
         def __init__(self, allow_invalid=False, file_layout=None,
             file_root=None, log_obj=None, mirror=False, pub=None,
             read_only=False, root=None,
-            sort_file_max_size=indexer.SORT_FILE_MAX_SIZE, writable_root=None):
+            sort_file_max_size=indexer.SORT_FILE_MAX_SIZE, writable_root=None,
+            signature_format='utf8'):
                 """Prepare the repository for use."""
 
                 self.__catalog = None
                 self.__catalog_root = None
+                self.__signature_format = signature_format
                 # FileManager supports multiple layouts, but realistically, it
                 # is desirable to only support one per repository format
                 # version.
@@ -1093,7 +1095,7 @@ class _RepoStore(object):
                 self.__set_catalog_root(tmp_cat_root)
                 if lm:
                         self.catalog.last_modified = lm
-                self.catalog.save()
+                self.catalog.save(fmt=self.__signature_format)
 
                 orig_cat_root = None
                 if os.path.exists(old_cat_root):
@@ -2881,6 +2883,7 @@ class Repository(object):
 
                 # Setup repository stores.
                 def_pub = self.cfg.get_property("publisher", "prefix")
+                sigfmt = self.cfg.get_property("repository", "signature-format")
                 if self.version == 4:
                         # For repository versions 4+, there is a repository
                         # store for the top-level file root (and it must
@@ -2890,7 +2893,8 @@ class Repository(object):
                                 froot = os.path.join(self.root, "file")
                         rstore = _RepoStore(file_layout=layout.V1Layout(),
                             file_root=froot, log_obj=self.log_obj,
-                            mirror=self.mirror, read_only=self.read_only)
+                            mirror=self.mirror, read_only=self.read_only,
+                            signature_format=sigfmt)
                         self.__rstores[rstore.publisher] = rstore
 
                         # ...and then one for each publisher if any are known.
@@ -3077,12 +3081,14 @@ class Repository(object):
                         # might use a mix of layouts.
                         file_layout = layout.V1Layout()
 
+                sigfmt = self.cfg.get_property("repository", "signature-format")
+
                 rstore = _RepoStore(allow_invalid=allow_invalid,
                     file_layout=file_layout, file_root=froot,
                     log_obj=self.log_obj, mirror=self.mirror, pub=pub,
                     read_only=self.read_only, root=root,
                     sort_file_max_size=self.__sort_file_max_size,
-                    writable_root=writ_root)
+                    writable_root=writ_root, signature_format=sigfmt)
                 self.__rstores[pub] = rstore
                 return rstore
 
@@ -4414,6 +4420,7 @@ class RepositoryConfig(object):
 		    # NOTE: OmniOS uses a different trust anchor directory.
                     cfg.Property("trust-anchor-directory",
                         default="/etc/ssl/pkg/"),
+                    cfg.Property("signature-format", default="ascii"),
                     cfg.PropList("signature-required-names"),
                     cfg.PropBool("check-certificate-revocation", default=False)
                 ]),
