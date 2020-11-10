@@ -2883,7 +2883,11 @@ class Repository(object):
 
                 # Setup repository stores.
                 def_pub = self.cfg.get_property("publisher", "prefix")
-                sigfmt = self.cfg.get_property("repository", "signature-format")
+                try:
+                        sigfmt = self.cfg.get_property("repository",
+                            "signature-format")
+                except:
+                        sigfmt = 'ascii'
                 if self.version == 4:
                         # For repository versions 4+, there is a repository
                         # store for the top-level file root (and it must
@@ -3081,7 +3085,11 @@ class Repository(object):
                         # might use a mix of layouts.
                         file_layout = layout.V1Layout()
 
-                sigfmt = self.cfg.get_property("repository", "signature-format")
+                try:
+                        sigfmt = self.cfg.get_property("repository",
+                            "signature-format")
+                except:
+                        sigfmt = 'ascii'
 
                 rstore = _RepoStore(allow_invalid=allow_invalid,
                     file_layout=file_layout, file_root=froot,
