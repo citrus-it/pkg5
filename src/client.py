@@ -724,7 +724,7 @@ def list_inventory(op, api_inst, pargs,
                             "Known fields are: {}".format(
                                 ', '.join(sorted(fields.keys()))))
                 if len(attrs) == 0:
-                        usage("No fields specified. Known fields are: {}"
+                        usage("No valid fields specified. Known fields are: {}"
                               .format(', '.join(sorted(fields.keys()))))
                 # If there is more than one field selected, we need to
                 # accumulate all results in order to determine the column
@@ -4419,115 +4419,239 @@ def publisher_unset(api_inst, pargs):
 
         return out_json["status"]
 
-def publisher_list(op, api_inst, pargs, omit_headers, preferred_only,
-    inc_disabled, output_format):
+def publisher_list_arg(op, api_inst, pargs, omit_headers, preferred_only,
+    inc_disabled, output_format, output_fields):
         """pkg publishers."""
 
-        ret_json = client_api._publisher_list(op, api_inst, pargs, omit_headers,
-            preferred_only, inc_disabled, output_format)
+        def display_signing_certs(p):
+                if "Approved CAs" in p:
+                        msg(_("         Approved CAs:"),
+                            p["Approved CAs"][0])
+                        for h in p["Approved CAs"][1:]:
+                                msg(_("                     :"), h)
+                if "Revoked CAs" in p:
+                        msg(_("          Revoked CAs:"),
+                            p["Revoked CAs"][0])
+                        for h in p["Revoked CAs"][1:]:
+                                msg(_("                     :"), h)
+
+        def display_ssl_info(uri_data):
+                msg(_("              SSL Key:"), uri_data["SSL Key"])
+                msg(_("             SSL Cert:"), uri_data["SSL Cert"])
+
+                if "errors" in ret_json:
+                        for e in ret_json["errors"]:
+                                if "errtype" in e and \
+                                    e["errtype"] == "cert_info":
+                                        emsg(e["reason"])
+
+                if "Cert. Effective Date" in uri_data:
+                        msg(_(" Cert. Effective Date:"),
+                            uri_data["Cert. Effective Date"])
+                        msg(_("Cert. Expiration Date:"),
+                            uri_data["Cert. Expiration Date"])
+
+        ret_json = client_api._publisher_list(op, api_inst, pargs)
         retcode = ret_json["status"]
 
-        if len(pargs) == 0:
-                pprint(ret_json)
-                # Create a formatting string for the default output
-                # format.
-                if output_format == "default":
-                        fmt = "{0:14} {1:12} {2:8} {3:2} {4} {5}"
+        if "data" not in ret_json or "publisher_details" not in \
+            ret_json["data"]:
+                return retcode
 
-                # Create a formatting string for the tsv output
-                # format.
-                if output_format == "tsv":
-                        fmt = "{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}"
+        for pub in ret_json["data"]["publisher_details"]:
+                msg("")
+                msg(_("            Publisher:"), pub["Publisher"])
+                msg(_("                Alias:"), pub["Alias"])
 
-                # Output an header if desired.
-                if not omit_headers:
-                        msg(fmt.format(*ret_json["data"]["headers"]))
+                if "origins" in pub:
+                        for od in pub["origins"]:
+                                msg(_("           Origin URI:"),
+                                    od["Origin URI"])
+                                msg(_("        Origin Status:"),
+                                    od["Status"])
+                                if "Proxy" in od:
+                                        msg(_("                Proxy:"),
+                                            ", ".join(od["Proxy"]))
+                                display_ssl_info(od)
 
-                for p in ret_json["data"]["publishers"]:
-                        msg(fmt.format(*p))
-        else:
-                def display_signing_certs(p):
-                        if "Approved CAs" in p:
-                                msg(_("         Approved CAs:"),
-                                    p["Approved CAs"][0])
-                                for h in p["Approved CAs"][1:]:
-                                        msg(_("                     :"), h)
-                        if "Revoked CAs" in p:
-                                msg(_("          Revoked CAs:"),
-                                    p["Revoked CAs"][0])
-                                for h in p["Revoked CAs"][1:]:
-                                        msg(_("                     :"), h)
+                if "mirrors" in pub:
+                        for md in pub["mirrors"]:
+                                msg(_("           Mirror URI:"),
+                                    md["Mirror URI"])
+                                msg(_("           Mirror Status:"),
+                                    md["Status"])
+                                if "Proxy" in md:
+                                        msg(_("                Proxy:"),
+                                            ", ".join(md["Proxy"]))
+                                display_ssl_info(md)
 
-                def display_ssl_info(uri_data):
-                        msg(_("              SSL Key:"), uri_data["SSL Key"])
-                        msg(_("             SSL Cert:"), uri_data["SSL Cert"])
+                msg(_("          Client UUID:"),
+                    pub["Client UUID"])
+                msg(_("      Catalog Updated:"),
+                    pub["Catalog Updated"])
+                display_signing_certs(pub)
+                msg(_("    Publisher enabled:"),
+                    _(pub["enabled"]))
 
-                        if "errors" in ret_json:
-                                for e in ret_json["errors"]:
-                                        if "errtype" in e and \
-                                            e["errtype"] == "cert_info":
-                                                emsg(e["reason"])
-
-                        if "Cert. Effective Date" in uri_data:
-                                msg(_(" Cert. Effective Date:"),
-                                    uri_data["Cert. Effective Date"])
-                                msg(_("Cert. Expiration Date:"),
-                                    uri_data["Cert. Expiration Date"])
-
-                if "data" not in ret_json or "publisher_details" not in \
-                    ret_json["data"]:
-                        return retcode
-
-                for pub in ret_json["data"]["publisher_details"]:
-                        msg("")
-                        msg(_("            Publisher:"), pub["Publisher"])
-                        msg(_("                Alias:"), pub["Alias"])
-
-                        if "origins" in pub:
-                                for od in pub["origins"]:
-                                        msg(_("           Origin URI:"),
-                                            od["Origin URI"])
-                                        msg(_("        Origin Status:"),
-                                            od["Status"])
-                                        if "Proxy" in od:
-                                                msg(_("                Proxy:"),
-                                                    ", ".join(od["Proxy"]))
-                                        display_ssl_info(od)
-
-                        if "mirrors" in pub:
-                                for md in pub["mirrors"]:
-                                        msg(_("           Mirror URI:"),
-                                            md["Mirror URI"])
-                                        msg(_("           Mirror Status:"),
-                                            md["Status"])
-                                        if "Proxy" in md:
-                                                msg(_("                Proxy:"),
-                                                    ", ".join(md["Proxy"]))
-                                        display_ssl_info(md)
-
-                        msg(_("          Client UUID:"),
-                            pub["Client UUID"])
-                        msg(_("      Catalog Updated:"),
-                            pub["Catalog Updated"])
-                        display_signing_certs(pub)
-                        msg(_("    Publisher enabled:"),
-                            _(pub["enabled"]))
-
-                        if "Properties" not in pub:
+                if "Properties" not in pub:
+                        continue
+                pub_items = sorted(
+                    six.iteritems(pub["Properties"]))
+                property_padding = "                      "
+                properties_displayed = False
+                for k, v in pub_items:
+                        if not v:
                                 continue
-                        pub_items = sorted(
-                            six.iteritems(pub["Properties"]))
-                        property_padding = "                      "
-                        properties_displayed = False
-                        for k, v in pub_items:
-                                if not v:
-                                        continue
-                                if not properties_displayed:
-                                        msg(_("           Properties:"))
-                                        properties_displayed = True
-                                if not isinstance(v, six.string_types):
-                                        v = ", ".join(sorted(v))
-                                msg(property_padding, k + " =", str(v))
+                        if not properties_displayed:
+                                msg(_("           Properties:"))
+                                properties_displayed = True
+                        if not isinstance(v, six.string_types):
+                                v = ", ".join(sorted(v))
+                        msg(property_padding, k + " =", str(v))
+        return retcode
+
+def publisher_list(op, api_inst, pargs, omit_headers, preferred_only,
+    inc_disabled, output_format, output_fields):
+        """pkg publishers."""
+
+        if len(pargs) > 0:
+                return publisher_list_arg(op, api_inst, pargs, omit_headers,
+                    preferred_only, inc_disabled, output_format, output_fields)
+
+        def gen_attrs(x):
+                slist = []
+                if not x.get('sticky'):
+                    slist.append(_("non-sticky"))
+                if not x.get('pub_enabled'):
+                    slist.append(_("disabled"))
+                if x.get('syspub'):
+                    slist.append(_("syspub"))
+
+                if len(slist):
+                        return "({})".format(", ".join(slist))
+                return None
+
+        def gen(meta=False):
+                fields = {
+                    "enabled": {
+                        "header": "ENABLED",
+                        "display": lambda x:
+                            _("true") if x.get('origin_enabled')
+                            else _("false"),
+                    },
+                    "location": {
+                        "header": "LOCATION",
+                        "display": lambda x: x.get('location'),
+                    },
+                    "proxy": {
+                        "header": "PROXY",
+                        "display": lambda x: x.get('proxy'),
+                    },
+                    "publisher": {
+                        "header": "PUBLISHER",
+                        "display": lambda x: x.get('publisher'),
+                    },
+                    "status": {
+                        "header": "STATUS",
+                        "display": lambda x:
+                            # mirrors always show as online
+                            _("online") if x.get('origin_enabled') or
+                            x.get('mirror') else _("disabled"),
+                    },
+                    "sticky": {
+                        "header": "STICKY",
+                        "display": lambda x:
+                            _("true") if x.get('sticky') else _("false"),
+                    },
+                    "syspub": {
+                        "header": "SYSPUB",
+                        "display": lambda x:
+                            _("true") if x.get('syspub') else _("false"),
+                    },
+                    "type": {
+                        "header": "TYPE",
+                        "display": lambda x:
+                            _("mirror") if x.get('mirror') else _("origin"),
+                    },
+                    "uri": {
+                        "header": "URI",
+                        "display": lambda x: x.get('uri'),
+                    },
+                    "proxied": {
+                        "header": "P",
+                        "display": lambda x:
+                            _("F") if x.get('proxy') == "-" else _("T"),
+                    },
+                    "attrs": {
+                        "header": "",
+                        "display": gen_attrs,
+                    },
+                }
+
+                if meta:
+                        yield {k: fields[k].get('header')
+                               for k in fields.keys()}
+                        return
+
+                ppub = api_inst.get_highest_ranked_publisher()
+                if ppub:
+                        ppub = ppub.prefix
+
+                for entry in ret_json['data']['publishers']:
+
+                        if not entry.get('pub_enabled') and not inc_disabled:
+                                continue
+
+                        if preferred_only and entry.get('publisher') != ppub:
+                                continue
+
+                        yield { a: fields[a].get('display')(entry)
+                                for a in attrs
+                        }
+
+        ret_json = client_api._publisher_list_v2(op, api_inst, pargs)
+        retcode = ret_json["status"]
+
+        fields = list(gen(True))[0]
+        accumulate = False
+        fmt_str = "{0}"
+        if output_fields:
+                attrs = list(dict.fromkeys(output_fields.lower().split(",")))
+                unknown = [a for a in attrs if not fields.get(a)]
+                if len(unknown):
+                        usage(
+                            "Unknown output field(s): {}\n".format(
+                                ', '.join(unknown)) +
+                            "Known fields are: {}".format(
+                                ', '.join(sorted(fields.keys()))))
+                if len(attrs) == 0:
+                        usage("No valid fields specified. Known fields are: {}"
+                              .format(', '.join(sorted(fields.keys()))))
+                # If there is more than one field selected, we need to
+                # accumulate all results in order to determine the column
+                # widths.
+                if len(attrs) > 1:
+                        accumulate = True
+        elif output_format == "default":
+                fmt_str = "{0:14} {1:12} {2:8} {3:2} {4} {5}"
+                attrs = ["publisher", "attrs", "type", "status", "proxied",
+                    "location"]
+        elif output_format == "tsv":
+                # Preserve the historical default fields for TSV output if
+                # -o was not given.
+                attrs = ["publisher", "sticky", "syspub", "enabled", "type",
+                    "status", "uri", "proxy"]
+        else:
+                attrs = list(fields.keys())
+
+        if accumulate:
+                data = list(gen())
+                fmt_str = calc_fmtstr(attrs, data)
+        else:
+                data = gen()
+
+        format_output(attrs, fields, data, output_format, fmt_str, omit_headers)
+
         return retcode
 
 def property_add_value(api_inst, args):

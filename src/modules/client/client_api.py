@@ -361,6 +361,14 @@ def __pkg_publisher_set_output_schema():
 def __pkg_publisher_unset_output_schema():
         return {}
 
+def __pkg_publisher_v2_output_schema():
+        data_schema = {"type": "object",
+            "properties": {
+                "publishers": {"type": "array", "items": {"type": "object" }}
+                }
+            }
+        return data_schema
+
 def __pkg_publisher_output_schema():
         data_schema = {"type": "object",
             "properties": {
@@ -1924,8 +1932,9 @@ def _publisher_unset(op, api_inst, pargs):
 
         return __prepare_json(retcode, errors=errors_json)
 
-def _publisher_list(op, api_inst, pargs, omit_headers, preferred_only,
-    inc_disabled, output_format):
+def _publisher_list(op, api_inst, pargs, omit_headers=False,
+    preferred_only=False, inc_disabled=True, output_format="default",
+    output_fields=None):
         """pkg publishers. Note: publisher_a is a left-over parameter."""
 
         errors_json = []
@@ -2297,6 +2306,54 @@ def _publisher_list(op, api_inst, pargs, omit_headers, preferred_only,
                         data.setdefault("publisher_details", []).append(
                             pub_data)
         return __prepare_json(retcode, data=data, errors=errors_json, op=op)
+
+def _publisher_list_v2(op, api_inst, pargs):
+        assert len(pargs) == 0
+
+        errors_json = []
+
+        api_inst.progresstracker.set_purpose(
+            api_inst.progresstracker.PURPOSE_LISTING)
+
+        retcode = EXIT_OK
+        data = {}
+        data["publishers"] = []
+        for p in api_inst.get_publishers():
+                entry = {
+                    "publisher": p.prefix,
+                    "sticky": p.sticky,
+                    "pub_enabled": not p.disabled,
+                    "syspub": p.sys_pub,
+                }
+
+                def parse_origin(mirror, uri):
+                        return {
+                            "mirror": mirror,
+                            "uri": str(uri),
+                            "location": SYSREPO_HIDDEN_URI
+                                if uri.system else str(uri),
+                            "origin_enabled": not uri.disabled,
+                            "proxy": ", ".join([proxy.uri
+                                for proxy in uri.proxies])
+                                if uri.proxies else "-"
+                        }
+
+                appended = False
+                for uri in sorted(p.repository.origins):
+                        data["publishers"].append(entry |
+                            parse_origin(False, uri))
+                        appended = True
+
+                for uri in p.repository.mirrors:
+                        data["publishers"].append(entry |
+                            parse_origin(True, uri))
+                        appended = True
+
+                if not appended:
+                        data["publishers"].append(entry)
+
+        return __prepare_json(retcode, data=data, errors=errors_json,
+            op='publisherv2')
 
 def _info(op, api_inst, pargs, display_license, info_local, info_remote,
     origins, quiet):
@@ -3373,6 +3430,7 @@ cmds = {
     "unset-publisher" : [_publisher_unset,
                           __pkg_publisher_unset_output_schema],
     "publisher"       : [_publisher_list, __pkg_publisher_output_schema],
+    "publisherv2"     : [_publisher_list_v2, __pkg_publisher_v2_output_schema],
     "info"            : [_info, __pkg_info_output_schema],
     "verify"          : [_verify, __pkg_verify_output_schema]
 }

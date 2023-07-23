@@ -450,6 +450,7 @@
 .Bk -words
 .Op Fl HPn
 .Op Fl F Ar format
+.Oo Fl o Ar column Ns Oo , Ns Ar column Oc Ns ... Oc Ns ...
 .Op Ar publisher No ...
 .Ek
 .\" set-publisher
@@ -2717,6 +2718,7 @@ Remove an existing image property or properties.
 .Cm publisher
 .Op Fl HPn
 .Op Fl F Ar format
+.Oo Fl o Ar column Ns Oo , Ns Ar column Oc Ns ... Oc Ns ...
 .Op Ar publisher No ...
 .Bd -ragged -offset Ds
 Display the list of all publishers in order of search preference.
@@ -2753,15 +2755,69 @@ last updated.
 Specify an alternative output format.
 The value of
 .Ar format
-can only be
-.Cm tsv
-(Tab Separated Values).
+can be
+.Sy tsv
+.Pq Tab Separated Values ,
+.Sy json
+.Pq JavaScript Object Notation as a single line ,
+or
+.Sy json-formatted
+.Pq JavaScript Object Notation, formatted for readability .
 .It Fl H
 Omit the headers from the listing.
 .It Fl P
 Display only the first publisher in the publisher search order.
 .It Fl n
 Display only enabled publishers.
+.It Fl o Ar column Ns Oo , Ns Ar column Oc Ns \&...
+Specify the columns to include in the output.
+Multiple attributes can be specified by separating the attribute names with
+commas.
+Valid column names are:
+.Bl -tag -width osrelease
+.It Cm enabled
+.Dq true
+if the publisher is enabled,
+.Dq false
+otherwise.
+.It Cm location
+The location of the publisher.
+.It Cm proxy
+Proxy server used to access the publisher, or
+.Sq \&-
+if no proxy is set.
+.It Cm publisher
+The name of the publisher.
+.It Cm status
+The status of the publisher,
+.Dq online
+or
+.Dq disabled .
+.It Cm sticky
+.Dq true
+if the publisher is sticky,
+.Dq false
+otherwise.
+.It Cm syspub
+.Dq true
+if the publisher is a system publisher,
+.Dq false
+otherwise.
+.It Cm type
+The type of the publisher,
+.Dq mirror
+or
+.Dq origin .
+.It Cm uri
+The URI used to access the publisher.
+.It Cm proxied
+.Dq T
+if a proxy is configured for this publisher,
+.Dq F
+otherwise.
+.It Cm attrs
+A string detailing attributes configured for this publisher, if any.
+.El
 .El
 .Ed
 .\" set-publisher

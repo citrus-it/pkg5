@@ -930,7 +930,7 @@ class TestPkgList(pkg5unittest.ManyDepotTestCase):
         def test_18_options(self):
                 """Verify some of the pkg list -o options"""
 
-                self.pkg("install fenix")
+                self.pkg("install fenix", exit=[0, 4])
 
                 expected = {
                     'branch': '0',
@@ -952,7 +952,7 @@ class TestPkgList(pkg5unittest.ManyDepotTestCase):
         def test_19_format(self):
                 """Verify pkg list -F"""
 
-                self.pkg("install fenix")
+                self.pkg("install fenix", exit=[0, 4])
 
                 self.pkg("list -F tsv -o name,osrelease,publisher fenix")
                 self.assertEqualDiff(

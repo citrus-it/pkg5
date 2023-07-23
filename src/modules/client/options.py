@@ -1369,6 +1369,7 @@ opts_verify = \
 opts_publisher = \
     opts_table_no_headers + \
     opts_table_output_format + \
+    opts_table_output_fields + \
     opts_table_pub_list + \
     []
 
