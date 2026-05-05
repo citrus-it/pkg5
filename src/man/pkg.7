@@ -18,32 +18,47 @@ actions, defined by a set of key/value pairs and possibly a data payload.
 In many cases, actions are files found in a file system, but they also
 represent other installable objects, such as drivers, services, and users.
 .Sh PACKAGE FMRIS AND VERSIONS
-Each package is represented by a fault management resource identifier (FMRI)
+Each package is represented by a fault management resource identifier
+.Pq FMRI
 with the scheme
 .Sy pkg\&: .
-The full FMRI for a package consists of the scheme, a publisher, the package
-name, and a version string in the following format:
-.Bd -literal
-pkg://omnios/terminal/tmux@3.1.2-151036.0:20201029T171510Z
+A fully qualified FMRI consists of the scheme, a publisher, the package
+name, and a version string, as shown in the annotated example below:
+.Bd -literal -offset indent
+pkg://omnios/terminal/tmux@3.1.2,5.11-151036.0:20201029T171510Z
+\e_/   \e____/ \e___________/ \e___/ \e__/ \e______/ \e______________/
+ |      |          |         |    |      |            |
+ |      |          |         |    |      |            timestamp
+ |      |          |         |    |      branch version
+ |      |          |         |    build version
+ |      |          |         component version
+ |      |          package name
+ |      publisher
+ scheme
 .Ed
 .Pp
-In this example,
-.Sy omnios
-is the publisher and
-.Sy terminal/tmux
-is the package name.
-Although the namespace is hierarchical and arbitrarily deep, there is no
-enforced containment; the name is essentially arbitrary.
-The publisher information is optional, but must be preceded by
-.Sy pkg://
-if present.
-An FMRI that includes the publisher is often referred to as being "fully
-qualified." If publisher information is not present, then the package name
-should generally be preceded by
-.Sy pkg:/ .
+The publisher and each version part are described in the sections below.
+Each version part beyond the component version is optional and is
+identified by its leading separator, so any combination may be present.
+.Ss Publisher
+A publisher name identifies a person, group of persons, or an organisation
+as the source of one or more packages.
+To avoid name collisions and help identify the publisher, a best practice
+is to use a domain name that represents the entity publishing the packages.
 .Pp
-Packaging clients often allow the scheme of an FMRI to be omitted if it does
-not contain publisher information.
+The publisher is optional, but if present must be preceded by
+.Sy pkg:// .
+An FMRI that includes the publisher is referred to as being
+.Dq fully qualified .
+If the publisher is not present, the package name should generally be
+preceded by
+.Sy pkg:/ .
+.Ss Package name
+The package name namespace is hierarchical and arbitrarily deep, but
+there is no enforced containment; the name is essentially arbitrary.
+.Pp
+Packaging clients often allow the scheme of an FMRI to be omitted if it
+does not contain publisher information.
 For example,
 .Sy pkg:/terminal/tmux
 can be written as
@@ -58,87 +73,83 @@ which would then match packages named
 .Sy tmux
 or package names ending in
 .Sy /tmux .
-.Pp
-A publisher name identifies a person, group of persons, or an organisation as
-the source of one or more packages.
-To avoid publisher name collisions and help identify the publisher, a best
-practice is to use a domain name that represents the entity publishing the
-packages as a publisher name.
-.Pp
-The version follows the package name, separated by an at sign (@).
-The version consists of four sequences of numbers, separated by punctuation.
-The elements in the first three sequences are separated by dots, and the
-sequences are arbitrarily long.
-Leading zeros in version components (for example,
-.Pq for example, Sy 01.1 No or Sy 1.01
-are not permitted.
-Trailing zeros
-.Pq for example, Sy 1.10
-are permitted.
-.Pp
-The first part of the version is the component version.
-For components tightly bound to the operating system, this is usually the value
-of
+.Ss Version
+The version follows the package name, separated by an at sign
+.Pq Sy @ ,
+and consists of up to four parts:
+.Bl -tag -width "component version  "
+.It Sy component version
+For components tightly bound to the operating system, this is usually the
+value of
 .Ql uname -r
 for that version of the operating system.
-For a component with its own development lifecycle, this sequence is a dotted
-release number, such as 2.4.10.
+For a component with its own development lifecycle, this sequence is a
+dotted release number, such as
+.Sy 2.4.10 .
+.It Sy build version
+Introduced by a comma
+.Pq Sy \&, .
+This specifies the version of the operating system that the contents of
+the package were built against, providing a minimum bound on which
+operating system version the contents can be expected to run successfully.
+.It Sy branch version
+Introduced by a hyphen
+.Pq Sy \- .
+A vendor-specific versioning component that can be incremented when the
+packaging metadata is changed, independently of the component version.
+The branch version may contain a build number or other information.
+.It Sy timestamp
+Introduced by a colon
+.Pq Sy \&: .
+Represents when the package was published.
+.El
 .Pp
-The second part of the version, which if present must follow a comma
-.Pq Sy \&, ,
-is the build version.
-The build version specifies what version of the operating system the contents
-of the package were built on, providing a minimum bound on which operating
-system version the contents can be expected to run successfully.
+The component, build, and branch versions consist of one or more
+non-negative integers separated by dots; there is no limit on the
+number of integers.
+Each integer must be written in plain decimal with no leading zero
+padding, so
+.Sy 01.1
+and
+.Sy 1.01
+are not permitted; they should both be written as
+.Sy 1.1 .
 .Pp
-The third part of the version, which if present must follow a hyphen
-.Pq Sy \- ,
-is the branch version.
-The branch version is a versioning component that provides vendor-specific
-information.
-The branch version can be incremented when the packaging metadata is changed,
-independently of the component version.
-The branch version might contain a build number or other information.
-.Pp
-The fourth part of the version, which if present must follow a colon
-.Pq Sy \&: ,
-is a timestamp.
-The timestamp represents when the package was published.
-.Pp
-When performing comparisons between versions, no component of the full version
-is considered unless the components to its left are the same.
-Thus,
+When comparing versions, no part is considered unless the parts to its
+left are equal.
+For example,
 .Sy 4.3-1
 is greater than
 .Sy 4.2-7
 because
 .Sy 4.3
 is greater than
-.Sy 4.2 ,
+.Sy 4.2 ;
 and
 .Sy 4.3-3
 is greater than
 .Sy 4.3-1
-because
+because the component versions are equal but
 .Sy 3
 is greater than
 .Sy 1 .
-.Pp
+.Ss Abbreviated forms
+Many parts of the system, when appropriate, abridge FMRIs when displaying
+them, and accept input in shorter forms to reduce the volume of
+information displayed or required.
+Typically, the scheme, publisher, build version, and timestamp can be
+elided.
+Sometimes all of the versioning information can be omitted.
+.Ss Human-readable versions
 The
 .Sy pkg.human-version
-attribute can be used to provide a human-readable version string.
-The value of the
-.Sy pkg.human-version
-attribute can be provided in addition to the package version described above
-for the package FMRI but cannot replace the package FMRI version.
-The human-readable version string is only used for display purposes.
-See "Set Actions" for more information.
-.Pp
-Many parts of the system, when appropriate, abridge FMRIs when displaying them,
-and accept input in shorter forms to reduce the volume of information displayed
-or required.
-Typically, the scheme, publisher, build version, and timestamp can be elided.
-Sometimes all of the versioning information can be omitted.
+attribute can be used to provide a human-readable version string in
+addition to the package version described above.
+It cannot replace the package FMRI version, and is only used for display
+purposes.
+See
+.Sx Set Actions
+for more information.
 .Sh ACTIONS
 Actions represent the installable objects on a system.
 Actions are described in the manifest of a package.
@@ -189,7 +200,7 @@ developments.
 Some attributes cause additional operations to be executed outside of the
 packaging context.
 These attributes are documented in the
-.Sx Actuators
+.Sx ACTUATORS
 section below.
 .Pp
 Actions that are installed to a path must not deliver content to any of
@@ -731,7 +742,7 @@ If that directory contains unpackaged file system objects, those items are
 moved into
 .Sy $IMAGE_META Ns Pa /lost+found .
 See the
-.Sx Files
+.Sx FILES
 section for more information about
 .Sy $IMAGE_META .
 .Bl -tag -width 6n
@@ -1024,7 +1035,7 @@ concurrently with the package specifying the dependency.
 The dependency is optional, but the version of the dependent package is
 constrained.
 See
-.Sx Constraints and Freezing
+.Sx CONSTRAINTS AND FREEZING
 below.
 .It Sy require-any
 Any one of the packages specified by multiple
@@ -1254,17 +1265,13 @@ A detailed description of the contents and functionality of the package,
 typically a paragraph or so in length.
 .It Sy pkg.fmri
 The name and version of the containing package.
-See
-.Sx Package FMRIs and Versions
-in the
-.Sx Description
+See the
+.Sx PACKAGE FMRIS AND VERSIONS
 section.
 .It Sy pkg.human-version
 The version scheme used by IPS is strict.
-See
-.Sx Package FMRIs and Versions
-in the
-.Sx Description
+See the
+.Sx PACKAGE FMRIS AND VERSIONS
 section.
 A more flexible version can be provided as the value of the
 .Sy pkg.human-version
@@ -1509,7 +1516,7 @@ However, it must do so explicitly with a glob as accepted by
 rather than doing so implicitly by not indicating any instances.
 .\"
 .El
-.Sh MEDIATIORS
+.Sh MEDIATORS
 A mediator is a name that represents a set of related symbolic or hard links.
 If two or more link actions have the same path and mediator name, the user or
 the package system selects the link target based on version, implementation, or
@@ -1649,7 +1656,7 @@ A mirror can be created by removing all subdirectories of a repository except
 those named
 .Sy file
 and their parents.
-An origin repository can be also be provisioned as a mirror by using the mirror
+An origin repository can also be provisioned as a mirror by using the mirror
 mode of
 .Xr pkg.depotd 8 .
 .\"
