@@ -49,6 +49,7 @@ import pkg.client.actioncache as actioncache
 import pkg.client.api_errors as apx
 import pkg.client.bootenv as bootenv
 import pkg.client.history as history
+import pkg.client.imagecatalog as imagecatalog
 import pkg.client.imageconfig as imageconfig
 import pkg.client.imageplan as imageplan
 import pkg.client.linkedimage as li
@@ -114,7 +115,7 @@ class Image(object):
     """
 
     # Class constants
-    CURRENT_VERSION = 4
+    CURRENT_VERSION = 5
     IMG_CATALOG_KNOWN = "known"
     IMG_CATALOG_INSTALLED = "installed"
 
@@ -232,6 +233,10 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
         # Memoized installed-action cache handle; see
         # get_action_cache().
         self.__actioncache = None
+
+        # True while update_format is rewriting the image, to stop
+        # find_root/__set_dirs re-entering it recursively.
+        self.__upgrading = False
 
         self.__property_overrides = {"property": props}
 
@@ -765,7 +770,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
         if not version:
             version = self.version
 
-        if version == self.CURRENT_VERSION:
+        if version >= 4:
             img_dirs = [
                 "cache/index",
                 "cache/publisher",
@@ -776,9 +781,14 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
                 "lost+found",
                 "publisher",
                 "ssl",
-                "state/installed",
-                "state/known",
             ]
+            if version < 5:
+                img_dirs.extend(["state/installed", "state/known"])
+            else:
+                # Version 5 images keep their state in a single
+                # database file, but the directory holding it and
+                # the other loose state files must still exist.
+                img_dirs.append("state")
         else:
             img_dirs = [
                 "download",
@@ -940,7 +950,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
         self.cfg.set_property("image", "version", self.version)
 
         # Remaining dirs may now be set.
-        if self.version == self.CURRENT_VERSION:
+        if self.version >= 4:
             self.__tmpdir = os.path.join(self.imgdir, "cache", "tmp")
         else:
             self.__tmpdir = os.path.join(self.imgdir, "tmp")
@@ -1124,6 +1134,21 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
             nullf.close()
             return False
 
+        if self.__upgrading:
+            # An upgrade is already in progress; the transition
+            # through intermediate versions re-enters here via
+            # find_root.
+            return False
+
+        if self.allow_ondisk_upgrade is None and self.version >= 4:
+            # Version 4 images remain fully functional and need no
+            # in-memory data conversion, so unlike the older formats
+            # they are never upgraded automatically; moving to the
+            # version 5 state database is an explicit administrative
+            # action (pkg update-format).
+            self.__upgraded = True
+            return True
+
         if not progtrack:
             progtrack = progress.NullProgressTracker()
 
@@ -1138,23 +1163,33 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
 
         # Determine if on-disk portion of the upgrade is allowed.
         if self.allow_ondisk_upgrade is False:
+            progtrack.cache_catalogs_done()
             return True
 
-        if self.allow_ondisk_upgrade is None and self.type != IMG_USER:
-            if not self.is_liveroot() and not self.is_zone():
+        if self.allow_ondisk_upgrade is None:
+            if (
+                self.type != IMG_USER
+                and not self.is_liveroot()
+                and not self.is_zone()
+            ):
                 # By default, don't update image format if it
                 # is not the live root, and is not for a zone.
                 self.allow_ondisk_upgrade = False
+                progtrack.cache_catalogs_done()
                 return True
 
         # The logic to perform the on-disk upgrade is in its own
         # function so that it can easily be wrapped with locking logic.
-        with self.locked_op(
-            "update-format", allow_unprivileged=allow_unprivileged
-        ):
-            self.__upgrade_image_format(
-                progtrack, allow_unprivileged=allow_unprivileged
-            )
+        self.__upgrading = True
+        try:
+            with self.locked_op(
+                "update-format", allow_unprivileged=allow_unprivileged
+            ):
+                self.__upgrade_image_format(
+                    progtrack, allow_unprivileged=allow_unprivileged
+                )
+        finally:
+            self.__upgrading = False
 
         progtrack.cache_catalogs_done()
         return True
@@ -1330,8 +1365,44 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
         self.__catalogs[self.IMG_CATALOG_KNOWN] = kcat
         self.__catalogs[self.IMG_CATALOG_INSTALLED] = icat
 
+    def __upgrade_state_db(self, progtrack):
+        """Upgrade a version 4 image to version 5 by replacing the
+        JSON image state catalogs with the state database."""
+
+        # Build the new state directory contents from the JSON
+        # catalogs (which remain authoritative at version 4).
+        kcat = self.get_catalog(self.IMG_CATALOG_KNOWN)
+        icat = self.get_catalog(self.IMG_CATALOG_INSTALLED)
+
+        tmp_state_root = self.temporary_dir()
+        imagecatalog.build_db(
+            os.path.join(tmp_state_root, imagecatalog.DB_BASENAME),
+            kcat,
+            icat,
+        )
+
+        # Preserve other state files (avoid sets, frozen list, ...).
+        for pl in os.listdir(self._statedir):
+            fp = os.path.join(self._statedir, pl)
+            if os.path.isfile(fp) and pl != imagecatalog.DB_BASENAME:
+                portable.copyfile(fp, os.path.join(tmp_state_root, pl))
+
+        # Swap the new state directory into place, then update the
+        # image format version.
+        orig_state_root = self.salvage(self._statedir, full_path=True)
+        portable.rename(tmp_state_root, self._statedir)
+        shutil.rmtree(orig_state_root, True)
+
+        self.cfg.set_property("image", "version", self.CURRENT_VERSION)
+        self.save_config()
+        self.version = self.CURRENT_VERSION
+        self.__init_catalogs()
+
     def __upgrade_image_format(self, progtrack, allow_unprivileged=False):
         """Private helper function for update_format."""
+
+        if self.version >= 4:
+            return self.__upgrade_state_db(progtrack)
 
         try:
             # Ensure Image directory structure is valid.
@@ -1518,7 +1589,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
             dest,
             tmp_root,
             version=3,
-            overrides={"image": {"version": self.CURRENT_VERSION}},
+            overrides={"image": {"version": 4}},
         )
         newcfg._version = 3
         newcfg.write()
@@ -1533,6 +1604,10 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
         # old data will be dumped during initialization.
         orig_root = self.imgdir + ".old"
         try:
+            # Remove any salvage debris left by an interrupted or
+            # earlier upgrade; its deferred cleanup may not have
+            # run yet.
+            shutil.rmtree(orig_root, True)
             portable.rename(self.imgdir, orig_root)
             portable.rename(tmp_root, self.imgdir)
 
@@ -1549,6 +1624,16 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
         except EnvironmentError as e:
             raise apx._convert_error(e)
         self.find_root(self.root, exact_match=True, progtrack=progtrack)
+
+        if self.allow_ondisk_upgrade is not True:
+            # An automatic upgrade of a pre-4 image stops at the
+            # version 4 layout; the version 5 state database is an
+            # explicit administrative action (pkg update-format).
+            return
+
+        # The steps above produce the version 4 layout; now replace
+        # the JSON state catalogs with the state database.
+        self.__upgrade_state_db(progtrack)
 
     def create(
         self,
@@ -1726,7 +1811,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
 
         # For images newer than version 3, file data can be stored
         # in the publisher's file root.
-        if self.version == self.CURRENT_VERSION:
+        if self.version >= 4:
             for pub in self.gen_publishers(inc_disabled=True):
                 froot = os.path.join(pub.meta_root, "file")
                 readonly = False
@@ -1758,7 +1843,21 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
         # retrieved from the catalog itself since that is accurate
         # down to the micrsecond (as opposed to the filesystem which
         # has an OS-specific resolution).
-        rv = self.__get_catalog(self.IMG_CATALOG_KNOWN).last_modified
+        if self.version >= 5:
+            # Read the persistent state database directly; the
+            # catalog object returned by __get_catalog may be an
+            # in-memory materialisation (alternate package sources)
+            # whose timestamp does not reflect on-disk state.
+            db = imagecatalog.ImageCatalog(
+                os.path.join(self._statedir, imagecatalog.DB_BASENAME)
+            )
+            ts = db.last_modified()
+            db.close()
+            rv = None
+            if ts is not None:
+                rv = pkg.catalog.basic_ts_to_datetime(ts)
+        else:
+            rv = self.__get_catalog(self.IMG_CATALOG_KNOWN).last_modified
         if rv is None or not string:
             return rv
         return rv.strftime("%Y-%m-%dT%H:%M:%S.%f")
@@ -2230,7 +2329,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
             or (not search_before and not search_first)
         )
 
-        if self.version < self.CURRENT_VERSION:
+        if self.version < 4:
             raise apx.ImageFormatUpdateNeeded(self.root)
 
         for p in self.cfg.publishers.values():
@@ -2546,7 +2645,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
 
     def get_license_dir(self, pfmri):
         """Return path to package license directory."""
-        if self.version == self.CURRENT_VERSION:
+        if self.version >= 4:
             # Newer image format stores license files per-stem,
             # instead of per-stem and version, so that transitions
             # between package versions don't require redelivery
@@ -2575,7 +2674,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
             pfmri = pfmri.copy()
             pfmri.publisher = self.__get_installed_pkg_publisher(pfmri)
         assert pfmri.publisher
-        if self.version == self.CURRENT_VERSION:
+        if self.version >= 4:
             root = self._get_publisher_cache_root(pfmri.publisher)
         else:
             root = self.imgdir
@@ -2589,7 +2688,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
             pfmri = pfmri.copy()
             pfmri.publisher = self.__get_installed_pkg_publisher(pfmri)
         assert pfmri.publisher
-        if self.version == self.CURRENT_VERSION:
+        if self.version >= 4:
             root = os.path.join(self._get_publisher_meta_root(pfmri.publisher))
             return os.path.join(root, "pkg", pfmri.get_dir_path())
         return os.path.join(self.get_manifest_dir(pfmri), "manifest")
@@ -2663,29 +2762,36 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
 
         return m
 
-    def __catalog_save(self, cats, pfmris, progtrack):
+    def __catalog_save(self, cats, pfmris, progtrack, db_pfmris=None):
         # Temporarily redirect the catalogs to a different location,
         # so that if the save is interrupted, the image won't be left
         # with invalid state, and then save them.
+        #
+        # 'db_pfmris' is the complete set of packages whose entries
+        # were changed (unlike 'pfmris', which only needs to cover
+        # additions for re-sorting purposes) and is used to keep the
+        # image state database in step; if None, the database is
+        # rebuilt in full.
         tmp_state_root = self.temporary_dir()
 
         try:
-            for cat, name in cats:
-                cpath = os.path.join(tmp_state_root, name)
+            if self.version < 5:
+                for cat, name in cats:
+                    cpath = os.path.join(tmp_state_root, name)
 
-                # Must copy the old catalog data to the new
-                # destination as only changed files will be
-                # written.
-                progtrack.job_add_progress(progtrack.JOB_IMAGE_STATE)
-                misc.copytree(cat.meta_root, cpath)
-                progtrack.job_add_progress(progtrack.JOB_IMAGE_STATE)
-                cat.meta_root = cpath
-                cat.finalize(pfmris=pfmris)
-                progtrack.job_add_progress(progtrack.JOB_IMAGE_STATE)
-                cat.save()
-                progtrack.job_add_progress(progtrack.JOB_IMAGE_STATE)
+                    # Must copy the old catalog data to the new
+                    # destination as only changed files will be
+                    # written.
+                    progtrack.job_add_progress(progtrack.JOB_IMAGE_STATE)
+                    misc.copytree(cat.meta_root, cpath)
+                    progtrack.job_add_progress(progtrack.JOB_IMAGE_STATE)
+                    cat.meta_root = cpath
+                    cat.finalize(pfmris=pfmris)
+                    progtrack.job_add_progress(progtrack.JOB_IMAGE_STATE)
+                    cat.save()
+                    progtrack.job_add_progress(progtrack.JOB_IMAGE_STATE)
 
-            del cat, name
+                del cat, name
             self.__init_catalogs()
             progtrack.job_add_progress(progtrack.JOB_IMAGE_STATE)
 
@@ -2696,6 +2802,55 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
                 fp = os.path.join(self._statedir, p)
                 if os.path.isfile(fp):
                     portable.copyfile(fp, os.path.join(tmp_state_root, p))
+
+            if self.version >= 5:
+                # The database (copied above) is the only store.
+                progtrack.job_add_progress(progtrack.JOB_IMAGE_STATE)
+                dbp = os.path.join(tmp_state_root, imagecatalog.DB_BASENAME)
+                if all(
+                    isinstance(cat, imagecatalog.StateCatalog)
+                    for cat, name in cats
+                ):
+                    # Apply the recorded state changes to the copy.
+                    imagecatalog.apply_state_save(
+                        dbp, [cat for cat, name in cats]
+                    )
+                else:
+                    # At least one catalog is an in-memory
+                    # materialisation (alternate package sources).
+                    # Rebuild the database from the catalog
+                    # contents, then apply any pending changes
+                    # recorded on database-backed catalogs (a mixed
+                    # pair can occur when one was cached before the
+                    # alternate sources were configured) and advance
+                    # the last-modified timestamp.
+                    cdict = dict((name, cat) for cat, name in cats)
+                    imagecatalog.build_db(
+                        dbp,
+                        cdict[self.IMG_CATALOG_KNOWN],
+                        cdict[self.IMG_CATALOG_INSTALLED],
+                    )
+                    imagecatalog.apply_state_save(
+                        dbp,
+                        [
+                            cat
+                            for cat, name in cats
+                            if isinstance(cat, imagecatalog.StateCatalog)
+                        ],
+                    )
+            elif not DebugValues["no-image-state-db"]:
+                # Keep the image state database (copied above) in
+                # step with the newly-saved catalogs.
+                cdict = dict((name, cat) for cat, name in cats)
+                kc = cdict.get(self.IMG_CATALOG_KNOWN)
+                ic = cdict.get(self.IMG_CATALOG_INSTALLED)
+                if kc is not None and ic is not None:
+                    imagecatalog.sync_entries(
+                        os.path.join(tmp_state_root, imagecatalog.DB_BASENAME),
+                        kc,
+                        ic,
+                        db_pfmris,
+                    )
 
             # Next, preserve the old installed state dir, rename the
             # new one into place, and then remove the old one.
@@ -2735,7 +2890,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
         the destination and origin package for each part of the
         operation."""
 
-        if self.version < self.CURRENT_VERSION:
+        if self.version < 4:
             raise apx.ImageFormatUpdateNeeded(self.root)
 
         kcat = self.get_catalog(self.IMG_CATALOG_KNOWN)
@@ -2760,6 +2915,10 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
                 )
 
         combo = added.union(removed)
+
+        # Every package whose catalog entry is touched here, for the
+        # image state database write-through.
+        db_changed = set(combo)
 
         # If PKG_AUTOINSTALL is set in the environment, don't mark
         # the installed packages as 'manually installed'. This is
@@ -2855,6 +3014,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
                 states = entry.get("metadata", {}).get("states", EmptyI)
                 if pkgdefs.PKG_STATE_ALT_SOURCE in states:
                     kcat.remove_package(pfmri)
+                    db_changed.add(pfmri)
 
             # Now add the publishers of packages that were installed
             # from temporary sources that did not previously exist
@@ -2921,6 +3081,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
             ],
             added,
             progtrack,
+            db_pfmris=db_changed,
         )
 
         progtrack.job_done(progtrack.JOB_IMAGE_STATE)
@@ -2952,6 +3113,67 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
 
         return cat
 
+    def get_state_db(self, installed=False):
+        """Return a current ImageCatalog view over the image state
+        database, or None if the no-image-state-db debug value is
+        set, alternate package sources are in effect (their entries
+        exist only in the in-memory JSON catalogs), or the database
+        is missing, unusable, or out of step with the image's known
+        catalog."""
+
+        if DebugValues["no-image-state-db"] and self.version < 5:
+            return None
+        if self.__alt_pkg_pub_map:
+            return None
+        dbpath = os.path.join(self._statedir, imagecatalog.DB_BASENAME)
+        if not os.path.exists(dbpath):
+            return None
+        db = imagecatalog.ImageCatalog(
+            dbpath, installed=installed, manifest_cb=self._state_manifest_cb
+        )
+        if self.version >= 5:
+            # The database is the authoritative store; no freshness
+            # comparison against JSON catalogs applies.
+            if db.usable():
+                return db
+            db.close()
+            return None
+        lm = self.get_catalog(self.IMG_CATALOG_KNOWN).last_modified
+        if lm is not None:
+            lm = pkg.catalog.datetime_to_basic_ts(lm)
+        if db.usable() and db.last_modified() == lm:
+            return db
+        db.close()
+        return None
+
+    def get_solver_catalog(self):
+        """Return the catalog object the dependency solver should
+        use: a SolverCatalog view over the image state database when
+        that is current, otherwise the JSON known catalog."""
+
+        db = self.get_state_db()
+        if db is not None:
+            return imagecatalog.SolverCatalog(db)
+        return self.get_catalog(self.IMG_CATALOG_KNOWN)
+
+    def get_list_catalog(self, name):
+        """Return the catalog object package listing operations
+        should use for the given image catalog name: a ListCatalog
+        view over the image state database when that is current,
+        otherwise the JSON catalog."""
+
+        db = self.get_state_db(installed=(name == self.IMG_CATALOG_INSTALLED))
+        if db is not None:
+            return imagecatalog.ListCatalog(db)
+        return self.get_catalog(name)
+
+    def _state_manifest_cb(self, f):
+        """Manifest retrieval callback used by the image state
+        database for lazy-loading action data of entries originating
+        from v0 catalog sources."""
+
+        return self.get_manifest(f, ignore_excludes=True)
+
     def _manifest_cb(self, cat, f):
         # Only allow lazy-load for packages from non-v1 sources.
         # Assume entries for other sources have all data
@@ -2975,6 +3197,22 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
             # and can't be reloaded from disk as it doesn't exist
             # on disk yet.
             return self.__catalogs[name]
+
+        if self.version >= 5:
+            if self.__alt_pkg_pub_map:
+                # Alternate package sources graft additional
+                # in-memory entries into the known catalog, so
+                # materialise a mutable in-memory catalog from
+                # the database for that case.
+                return imagecatalog.materialize(
+                    os.path.join(self._statedir, imagecatalog.DB_BASENAME),
+                    installed=(name == self.IMG_CATALOG_INSTALLED),
+                )
+            return imagecatalog.StateCatalog(
+                os.path.join(self._statedir, imagecatalog.DB_BASENAME),
+                installed=(name == self.IMG_CATALOG_INSTALLED),
+                manifest_cb=self._state_manifest_cb,
+            )
 
         croot = os.path.join(self._statedir, name)
         try:
@@ -3285,6 +3523,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
             # used for every entry.
             cat_ver = cat.version
             dp = cat.get_part("catalog.dependency.C", must_exist=True)
+            dp_key = dp_idx = None
 
             for t, sentry in spart.tuple_entries(pubs=[pfx]):
                 pub, stem, ver = t
@@ -3310,6 +3549,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
                         pub=pub,
                         stem=stem,
                         ver=ver,
+                        check_duplicate=False,
                     )
                     if installed:
                         nipart.add(
@@ -3318,6 +3558,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
                             pub=pub,
                             stem=stem,
                             ver=ver,
+                            check_duplicate=False,
                         )
                     continue
 
@@ -3360,10 +3601,19 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
                         states.append(pkgdefs.PKG_STATE_FROZEN)
 
                 # Determine if package is obsolete or has been
-                # renamed and mark with appropriate state.
+                # renamed and mark with appropriate state. Entries
+                # arrive grouped by publisher and stem, so index the
+                # dependency part's version list once per stem rather
+                # than linearly scanning it for every version.
                 dpent = None
                 if dp is not None:
-                    dpent = dp.get_entry(pub=pub, stem=stem, ver=ver)
+                    if dp_key != (pub, stem):
+                        dp_key = (pub, stem)
+                        dp_idx = dict(
+                            (e["version"], e)
+                            for e in dp.get_stem_entries(pub, stem)
+                        )
+                    dpent = dp_idx.get(ver)
                 if dpent is not None:
                     for a in dpent["actions"]:
                         # Constructing action objects
@@ -3405,7 +3655,12 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
 
                 # Add base entries.
                 nkpart.add(
-                    metadata=entry, op_time=op_time, pub=pub, stem=stem, ver=ver
+                    metadata=entry,
+                    op_time=op_time,
+                    pub=pub,
+                    stem=stem,
+                    ver=ver,
+                    check_duplicate=False,
                 )
                 if installed:
                     nipart.add(
@@ -3414,6 +3669,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
                         pub=pub,
                         stem=stem,
                         ver=ver,
+                        check_duplicate=False,
                     )
 
         # Now add installed packages to list of known packages using
@@ -3471,22 +3727,52 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
 
                     mdata["states"] = list(states)
 
-                # Add entries.
+                # Add entries. The installed-state pass above marked
+                # everything it added, so these are new to both parts.
                 nkpart.add(
-                    metadata=entry, op_time=op_time, pub=pub, stem=stem, ver=ver
+                    metadata=entry,
+                    op_time=op_time,
+                    pub=pub,
+                    stem=stem,
+                    ver=ver,
+                    check_duplicate=False,
                 )
                 nipart.add(
-                    metadata=entry, op_time=op_time, pub=pub, stem=stem, ver=ver
+                    metadata=entry,
+                    op_time=op_time,
+                    pub=pub,
+                    stem=stem,
+                    ver=ver,
+                    check_duplicate=False,
                 )
                 final_fmris.append(
                     pkg.fmri.PkgFmri(name=stem, publisher=pub, version=ver)
                 )
 
-        # Save the new catalogs.
-        for cat in kcat, icat:
-            misc.makedirs(cat.meta_root)
-            cat.finalize(pfmris=final_fmris)
-            cat.save()
+        if self.version >= 5:
+            # The database is the only store for the image state
+            # catalogs.
+            imagecatalog.build_db(
+                os.path.join(tmp_state_root, imagecatalog.DB_BASENAME),
+                kcat,
+                icat,
+            )
+        else:
+            # Save the new catalogs.
+            for cat in kcat, icat:
+                misc.makedirs(cat.meta_root)
+                cat.finalize(pfmris=final_fmris)
+                cat.save()
+
+            # The sqlite image state database is built alongside the
+            # JSON catalogs; no-image-state-db opts out for testing
+            # purposes.
+            if not DebugValues["no-image-state-db"]:
+                imagecatalog.build_db(
+                    os.path.join(tmp_state_root, imagecatalog.DB_BASENAME),
+                    kcat,
+                    icat,
+                )
 
         # Next, preserve the old installed state dir, rename the
         # new one into place, and then remove the old one.
@@ -3946,7 +4232,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
         the image root is, this should be called prior to using the
         index directory.
         """
-        if self.version == self.CURRENT_VERSION:
+        if self.version >= 4:
             self.index_dir = os.path.join(self.imgdir, "cache", postfix)
         else:
             self.index_dir = os.path.join(self.imgdir, postfix)
@@ -4208,7 +4494,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
         """Sets/unsets a state flag for packages installed in
         the image."""
 
-        if self.version < self.CURRENT_VERSION:
+        if self.version < 4:
             raise apx.ImageFormatUpdateNeeded(self.root)
 
         # Only the 'manual' flag can be set or unset via this
@@ -4264,6 +4550,7 @@ in the environment or by setting simulate_cmdpath in DebugValues.""")
                     ],
                     changed,
                     progtrack,
+                    db_pfmris=changed,
                 )
                 progtrack.job_done(progtrack.JOB_IMAGE_STATE)
 
